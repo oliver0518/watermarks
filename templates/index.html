@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地视频去水印工具</title>
+<link rel="stylesheet" href="static/main.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🎬 本地视频去水印工具</h1>
+    <p class="sub">OpenCV 智能修复 · 全程本地处理，视频不上传任何服务器</p>
+  </header>
+
+  <!-- Step 1: 选择视频 -->
+  <section id="step-upload" class="card">
+    <h2>1. 选择视频</h2>
+    <div id="dropzone" class="dropzone">
+      <div class="dz-inner">
+        <div class="dz-icon">📁</div>
+        <p>拖拽视频到这里，或 <span class="btn-like">点击选择</span></p>
+        <p class="hint">支持 MP4 / MOV / AVI / MKV / WEBM 等常见格式</p>
+      </div>
+      <input type="file" id="file-input" accept="video/*" hidden>
+    </div>
+    <div id="upload-status" class="status hidden"></div>
+  </section>
+
+  <!-- Step 2: 框选水印 -->
+  <section id="step-select" class="card hidden">
+    <h2>2. 框选要去除的水印区域</h2>
+    <div class="select-wrap">
+      <div class="video-box" id="video-box">
+        <video id="video" playsinline muted></video>
+        <div id="selection" class="selection hidden"></div>
+        <div class="video-overlay" id="video-overlay"></div>
+      </div>
+      <div class="controls">
+        <button id="btn-play">▶ 播放</button>
+        <button id="btn-clear" class="secondary">清除选区</button>
+        <span class="sel-info" id="sel-info">拖动鼠标在画面上框选水印位置</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 3: 处理 -->
+  <section id="step-process" class="card hidden">
+    <h2>3. 处理设置</h2>
+    <div class="process-row">
+      <label>修复算法：
+        <select id="method">
+          <option value="telea" selected>Telea 快速修复（推荐）</option>
+          <option value="ns">Navier-Stokes 平滑修复</option>
+        </select>
+      </label>
+      <label>修复半径：
+        <input type="range" id="radius" min="1" max="8" value="3">
+        <span id="radius-val">3</span>
+      </label>
+    </div>
+    <button id="btn-process" class="primary big">⚙ 开始去除水印</button>
+    <div id="progress" class="progress hidden">
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <span id="progress-text">处理中...</span>
+      <p class="hint">逐帧修复需要一点时间，时长越长处理越久，请耐心等待</p>
+    </div>
+  </section>
+
+  <!-- Step 4: 结果 -->
+  <section id="step-result" class="card hidden">
+    <h2>✅ 处理完成</h2>
+    <div class="result-box">
+      <video id="result-video" controls playsinline></video>
+      <a id="download-link" class="primary big" download>⬇ 下载处理后的视频</a>
+      <p class="hint">已保存为本地文件，可对比原视频查看效果</p>
+      <button id="btn-restart" class="secondary">重新处理另一个视频</button>
+    </div>
+  </section>
+</div>
+
+<script src="static/app.js"></script>
+</body>
+</html>

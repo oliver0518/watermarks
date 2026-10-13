@@ -40,6 +40,8 @@ Thumbs.db
 dist/
 build/
 *.spec
+# 例外：PyInstaller 构建用的 spec 必须提交，否则 GitHub Actions checkout 后会找不到
+!packaging/watermark-remover.spec
 # 打包用临时 ffmpeg/ffprobe（从系统复制，仅供 PyInstaller 内嵌用）
 /ffmpeg
 /ffprobe

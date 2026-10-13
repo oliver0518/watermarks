@@ -18,9 +18,9 @@ from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
-# spec 文件自身目录：packaging/，项目根在 packaging/../
-spec_dir = Path(__file__).resolve().parent
-project_root = spec_dir.parent
+# PyInstaller 跑 spec 时会注入 SPECPATH（spec 文件所在目录）。
+# 我们把 spec 放在 packaging/，所以 project_root 在 SPECPATH 的父目录。
+project_root = Path(SPECPATH).resolve().parent
 
 # 跨平台 ffmpeg/ffprobe 路径：Windows 上是 .exe，macOS/Linux 是无后缀
 _exe_suffix = ".exe" if sys.platform == "win32" else ""

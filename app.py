@@ -5,6 +5,7 @@
 完全本地处理，不上传任何数据。
 """
 import os
+import sys
 import uuid
 import subprocess
 import tempfile
@@ -32,8 +33,50 @@ LOG_DIR = os.path.join(BASE, "logs")
 for d in (UPLOAD_DIR, OUTPUT_DIR, LOG_DIR):
     os.makedirs(d, exist_ok=True)
 
+
+# PyInstaller 打包后，把 uploads/output/logs 重定向到用户可写目录
+# —— .app 安装到 /Applications 是系统保护的，普通用户写不进去。
+if getattr(sys, "frozen", False):
+    if sys.platform == "darwin":
+        user_base = os.path.expanduser("~/Library/Application Support/WatermarkRemover")
+    elif sys.platform == "win32":
+        user_base = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "WatermarkRemover",
+        )
+    else:
+        user_base = os.path.expanduser("~/.local/share/watermark-remover")
+    user_base = os.path.abspath(user_base)
+    BASE = user_base
+    UPLOAD_DIR = os.path.join(BASE, "uploads")
+    OUTPUT_DIR = os.path.join(BASE, "output")
+    LOG_DIR = os.path.join(BASE, "logs")
+    for d in (UPLOAD_DIR, OUTPUT_DIR, LOG_DIR):
+        os.makedirs(d, exist_ok=True)
+    log.info("data dir -> %s", BASE)
+
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "ffprobe"
+
+
+def _bundled_binary(name):
+    """如果运行在 PyInstaller 打包的 .app/_exe 内，从 _MEIPASS 取出内嵌二进制。"""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidate = os.path.join(base, name)
+        if os.path.isfile(candidate):
+            # macOS/Linux 需要可执行权限；Windows 上 .exe 通常已有
+            try:
+                os.chmod(candidate, 0o755)
+            except OSError:
+                pass
+            return candidate
+    return None
+
+
+# 优先使用打包时内嵌的 ffmpeg/ffprobe，未内嵌时回退到系统 PATH
+FFMPEG = _bundled_binary("ffmpeg") or FFMPEG
+FFPROBE = _bundled_binary("ffprobe") or FFPROBE
 
 ALLOWED_EXT = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv", ".wmv"}
 
@@ -363,5 +406,17 @@ def too_large(_e):
 
 if __name__ == "__main__":
     port = int(os.environ.get("DEPLOY_RUN_PORT", "8300"))
+
+    # 桌面应用自启动：PyInstaller 打包后，让浏览器自动打开界面
+    if getattr(sys, "frozen", False):
+        import threading, time, webbrowser
+        def _open_browser():
+            time.sleep(2)
+            try:
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            except Exception:
+                pass
+        threading.Thread(target=_open_browser, daemon=True).start()
+
     log.info("starting watermark-remover on http://127.0.0.1:%d", port)
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

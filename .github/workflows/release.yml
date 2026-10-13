@@ -82,13 +82,14 @@ jobs:
             --workpath packaging/build \
             packaging/watermark-remover.spec
 
-      # macOS: 给 .app 加 ad-hoc 签名，绕过 Gatekeeper "已损坏" 提示
-      - name: Codesign (macOS ad-hoc)
+      # macOS: 给 .app 加 ad-hoc 签名 + hardened runtime
+      # hardened runtime 让 Apple Silicon 上的 Gatekeeper 允许 .app 运行
+      - name: Codesign (macOS ad-hoc + hardened runtime)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          codesign --force --deep --sign - dist/WatermarkRemover.app
-          codesign -dv dist/WatermarkRemover.app 2>&1 | head -3
+          codesign --force --deep --sign - --options runtime dist/WatermarkRemover.app
+          codesign -dv --verbose=2 dist/WatermarkRemover.app 2>&1 | grep -E "flags|Identifier" | head -5
 
       # 平台特定：打包成最终分发格式
       - name: Package (macOS DMG)

@@ -35,3 +35,8 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 构建产物（本地打包，不提交）
+dist/
+build/
+*.spec

@@ -53,6 +53,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=("icon.ico" if sys.platform == "win32" else None),
 )
 
 coll = COLLECT(
@@ -70,7 +71,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="WatermarkRemover.app",
-        icon=None,
+        icon="icon.icns",
         bundle_identifier="cc.oliver.watermark-remover",
         info_plist={
             "CFBundleName": "Watermark Remover",

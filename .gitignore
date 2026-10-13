@@ -45,3 +45,6 @@ build/
 # 打包用临时 ffmpeg/ffprobe（从系统复制，仅供 PyInstaller 内嵌用）
 /ffmpeg
 /ffprobe
+
+# PyInstaller 构建用的图标临时目录
+packaging/icon-build/

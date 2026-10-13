@@ -6,6 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:    # 允许手动触发
 
+# 默认 GITHUB_TOKEN 只有读权限；softprops/action-gh-release 需要写权限才能创建/编辑 release。
+# 这里给最小写权限：contents (写 tag/release) + packages (写 package)
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -15,11 +21,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            archive_name: WatermarkRemover-1.0.0-macOS.dmg
+            archive_name: WatermarkRemover-1.0.1-macOS.dmg
           - os: ubuntu-latest
-            archive_name: WatermarkRemover-1.0.0-linux.tar.gz
+            archive_name: WatermarkRemover-1.0.1-linux.tar.gz
           - os: windows-latest
-            archive_name: WatermarkRemover-1.0.0-windows.zip
+            archive_name: WatermarkRemover-1.0.1-windows.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +36,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Python dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -38,6 +45,7 @@ jobs:
       # 平台特定：准备 ffmpeg/ffprobe 二进制到项目根
       - name: Prepare ffmpeg (macOS)
         if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           brew install ffmpeg
           cp "$(which ffmpeg)" ffmpeg
@@ -45,6 +53,7 @@ jobs:
 
       - name: Prepare ffmpeg (Linux)
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
@@ -53,15 +62,18 @@ jobs:
 
       - name: Prepare ffmpeg (Windows)
         if: matrix.os == 'windows-latest'
+        shell: bash
         run: |
           choco install -y ffmpeg
-          $ffmpeg = (Get-Command ffmpeg).Source
-          $ffprobe = (Get-Command ffprobe).Source
-          Copy-Item $ffmpeg ffmpeg.exe
-          Copy-Item $ffprobe ffprobe.exe
+          FFMPEG_PATH="$(which ffmpeg)"
+          FFPROBE_PATH="$(which ffprobe)"
+          cp "$FFMPEG_PATH" ffmpeg.exe
+          cp "$FFPROBE_PATH" ffprobe.exe
 
       # PyInstaller：cwd 保持项目根，spec 在 packaging/ 下，相对路径从 spec 解析
+      # 强制 bash shell——Windows runner 默认是 PowerShell，会把 --noconfirm 解析为 -- 运算符
       - name: PyInstaller build
+        shell: bash
         run: |
           pyinstaller \
             --noconfirm \
@@ -73,24 +85,27 @@ jobs:
       # macOS: 给 .app 加 ad-hoc 签名，绕过 Gatekeeper "已损坏" 提示
       - name: Codesign (macOS ad-hoc)
         if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           codesign --force --deep --sign - dist/WatermarkRemover.app
           codesign -dv dist/WatermarkRemover.app 2>&1 | head -3
 
-      # 平台特定：打包成最终分发格式（cwd = 项目根）
+      # 平台特定：打包成最终分发格式
       - name: Package (macOS DMG)
         if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           mkdir -p dmg-staging
           cp -R dist/WatermarkRemover.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
-          hdiutil create -volname "Watermark Remover 1.0.0" \
+          hdiutil create -volname "Watermark Remover 1.0.1" \
             -srcfolder dmg-staging \
             -ov -format UDZO \
             ${{ matrix.archive_name }}
 
       - name: Package (Linux tarball)
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           tar czf ${{ matrix.archive_name }} -C dist WatermarkRemover/
 

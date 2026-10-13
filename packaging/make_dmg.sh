@@ -34,10 +34,21 @@ if [ ! -x "$BIN" ]; then
   osascript -e 'display dialog "找不到内部程序" buttons {"好"} default button 1 with icon caution'
   exit 1
 fi
-nohup "$BIN" >/dev/null 2>&1 &
-sleep 2
-open http://127.0.0.1:8300
-echo "已启动。停止：在活动监视器结束 WatermarkRemover 进程，或 Terminal 跑：pkill -f WatermarkRemover"
+LOG="/tmp/watermark-remover.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') 启动中..." > "$LOG"
+nohup "$BIN" >> "$LOG" 2>&1 &
+APP_PID=$!
+sleep 4
+if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8300/ 2>/dev/null | grep -q "200"; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') ✓ 服务已在端口 8300" >> "$LOG"
+  open http://127.0.0.1:8300
+  osascript -e 'display dialog "Watermark Remover 已启动！浏览器已自动打开 http://127.0.0.1:8300" buttons {"好"} default button 1'
+else
+  echo "$(date '+%Y-%m-%d %H:%M:%S') ✗ 服务未启动" >> "$LOG"
+  ERROR=$(tail -20 "$LOG")
+  osascript -e "display dialog \"启动失败，日志：\n\n$ERROR\" buttons {\"查看日志\",\"关闭\"} default button 1 with icon caution" \
+    | grep -q "查看日志" && open -e "$LOG"
+fi
 LAUNCH_EOF
 chmod +x "$STAGE/启动 Watermark Remover.command"
 

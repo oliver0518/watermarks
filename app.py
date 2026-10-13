@@ -26,6 +26,13 @@ app = Flask(__name__)
 # 限制上传大小：1 GiB。Flask 会在超大请求时直接抛 413，避免内存被打爆。
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
 
+# 日志先初始化，下面的 BASE 重定向块要用 log.info
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger("watermark-remover")
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE, "uploads")
 OUTPUT_DIR = os.path.join(BASE, "output")
@@ -93,12 +100,6 @@ MAGIC_PREFIXES = (
 # 子进程超时：避免 ffmpeg 在坏文件上卡死把服务挂住
 FFMPEG_TIMEOUT = 3600     # 单个 ffmpeg 子进程最长等待 1 小时
 INPAINT_TIMEOUT = 7200   # 整个 inpaint 流程 2 小时上限
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-log = logging.getLogger("watermark-remover")
 
 
 # ---------- 工具函数 ----------

@@ -68,7 +68,6 @@ jobs:
             --clean \
             --distpath dist \
             --workpath packaging/build \
-            --specpath packaging \
             packaging/watermark-remover.spec
 
       # 平台特定：打包成最终分发格式（cwd = 项目根）

@@ -13,21 +13,31 @@ Usage:
 """
 
 import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# spec 文件自身目录：packaging/，项目根在 packaging/../
+spec_dir = Path(__file__).resolve().parent
+project_root = spec_dir.parent
+
+# 跨平台 ffmpeg/ffprobe 路径：Windows 上是 .exe，macOS/Linux 是无后缀
+_exe_suffix = ".exe" if sys.platform == "win32" else ""
+ffmpeg_src = str(project_root / f"ffmpeg{_exe_suffix}")
+ffprobe_src = str(project_root / f"ffprobe{_exe_suffix}")
 
 # OpenCV 包含 .so/.dylib 和 data 目录，必须 collect_all 全部带上
 cv2_datas, cv2_binaries, cv2_hiddenimports = collect_all("cv2")
 np_datas, np_binaries, np_hiddenimports = collect_all("numpy")
 
 a = Analysis(
-    ["../app.py"],
+    [str(project_root / "app.py")],
     pathex=[],
-    binaries=[("../ffmpeg", "."), ("../ffprobe", ".")] + cv2_binaries + np_binaries,
+    binaries=[(ffmpeg_src, "."), (ffprobe_src, ".")] + cv2_binaries + np_binaries,
     datas=[
-        ("../templates", "templates"),
-        ("../static", "static"),
+        (str(project_root / "templates"), "templates"),
+        (str(project_root / "static"), "static"),
     ] + cv2_datas + np_datas,
     hiddenimports=["flask", "werkzeug"] + cv2_hiddenimports + np_hiddenimports,
     hookspath=[],

@@ -848,8 +848,14 @@ if __name__ == "__main__":
             log.info("js_api injected, methods: %s, save_as: %s",
                      api_methods, callable(getattr(api_instance, "save_as", None)))
 
-            # 关窗 = 隐藏（不退出进程）
+            # 关窗 = 隐藏（不退出进程）；
+            # 但用户从 Dock / Cmd+Q 真退出时 → 必须让 window 真的关，不能再 hide
+            _app_is_quitting = [False]
+
             def on_closing():
+                if _app_is_quitting[0]:
+                    log.info("window closing: app is quitting — allow destroy")
+                    return True   # 不拦截 → window 真的关 → app 退出
                 log.info("window closing intercepted — hide instead of destroy")
                 window.hide()
                 return False  # 取消关闭，仅隐藏
@@ -860,9 +866,9 @@ if __name__ == "__main__":
                 log.warning("set closing handler failed: %s", e)
 
             # macOS: 让 app 不因最后一个 window 关闭而退出 + Dock 点击重新显示窗口
+            # + 用户主动 Quit 时正确退出（applicationShouldTerminate: 必须返回 NSTerminateNow）
             if sys.platform == "darwin":
                 try:
-                    # 1) 阻止 NSApp 在所有 window 关闭时退出
                     try:
                         import webview.platforms.cocoa as cocoa_platform
                         _AppDelegate = getattr(cocoa_platform, "AppDelegate", None) \
@@ -870,11 +876,12 @@ if __name__ == "__main__":
                     except Exception:
                         _AppDelegate = None
                     if _AppDelegate is not None:
-                        # 用 PyObjC 的 class extension 替换 method
+                        import objc
+
+                        # 1) 阻止 NSApp 在所有 window 关闭时退出（用户点 X 隐藏而非退出）
                         try:
                             def _keep_alive(self, _sender):
                                 return False
-                            import objc
                             objc.classAddMethod(
                                 _AppDelegate,
                                 b"applicationShouldTerminateAfterLastWindowClosed:",
@@ -884,8 +891,25 @@ if __name__ == "__main__":
                         except Exception as e:
                             log.warning("patch AppDelegate (keep alive) failed: %s", e)
 
-                        # 2) Dock 点击重新显示窗口 —— 必须用 applicationShouldHandleReopen:hasVisibleWindows:
-                        #    否则之前用的 NSApplicationDidBecomeActiveNotification 在 app 没退出的情况下不会触发
+                        # 2) 用户主动 Quit (Cmd+Q / Dock 右击「退出」/ 菜单) →
+                        #    设置 _app_is_quitting 让 on_closing 真的关闭窗口
+                        #    返回 NSTerminateNow (=1)
+                        try:
+                            from AppKit import NSApp
+                            def _should_terminate(self, _sender):
+                                _app_is_quitting[0] = True
+                                log.info("applicationShouldTerminate → user quit, allowing")
+                                return 1   # NSTerminateNow
+                            objc.classAddMethod(
+                                _AppDelegate,
+                                b"applicationShouldTerminate:",
+                                _should_terminate,
+                            )
+                            log.info("AppDelegate patched: quit returns NSTerminateNow")
+                        except Exception as e:
+                            log.warning("patch AppDelegate (should_terminate) failed: %s", e)
+
+                        # 3) Dock 点击重新显示窗口 —— 必须用 applicationShouldHandleReopen:hasVisibleWindows:
                         try:
                             def _reopen_has_windows(self, _sender, _flag):
                                 try:
@@ -894,8 +918,7 @@ if __name__ == "__main__":
                                 except Exception as exc:
                                     log.warning("reopen show failed: %s", exc)
                                 return True
-                            import objc as _objc
-                            _objc.classAddMethod(
+                            objc.classAddMethod(
                                 _AppDelegate,
                                 b"applicationShouldHandleReopen:hasVisibleWindows:",
                                 _reopen_has_windows,

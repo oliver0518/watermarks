@@ -21,11 +21,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            archive_name: WatermarkRemover-1.0.1-macOS.dmg
+            archive_name: WatermarkRemover-1.0.8-macOS.dmg
           - os: ubuntu-latest
-            archive_name: WatermarkRemover-1.0.1-linux.tar.gz
+            archive_name: WatermarkRemover-1.0.8-linux.tar.gz
           - os: windows-latest
-            archive_name: WatermarkRemover-1.0.1-windows.zip
+            archive_name: WatermarkRemover-1.0.8-windows.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +100,7 @@ jobs:
           mkdir -p dmg-staging
           cp -R dist/WatermarkRemover.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
-          hdiutil create -volname "Watermark Remover 1.0.1" \
+          hdiutil create -volname "Watermark Remover 1.0.8" \
             -srcfolder dmg-staging \
             -ov -format UDZO \
             ${{ matrix.archive_name }}

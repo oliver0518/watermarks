@@ -109,8 +109,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "秋白去水印",
             "CFBundleDisplayName": "秋白去水印",
-            "CFBundleShortVersionString": "1.0.1",
-            "CFBundleVersion": "2",
+            "CFBundleShortVersionString": "1.0.8",
+            "CFBundleVersion": "8",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.video",
             "LSMinimumSystemVersion": "11.0",

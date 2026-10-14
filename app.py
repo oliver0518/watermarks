@@ -30,6 +30,15 @@ app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    # PyInstaller frozen 时也写一份到 ~/Library/Logs/WatermarkRemover.log，
+    # 方便用户在 .app 闪退时排查（Gatekeeper 拦下后 stderr 看不到）。
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(
+            os.path.expanduser("~/Library/Logs/WatermarkRemover.log"),
+            mode="a",
+        ) if sys.platform == "darwin" else logging.StreamHandler(),
+    ],
 )
 log = logging.getLogger("watermark-remover")
 

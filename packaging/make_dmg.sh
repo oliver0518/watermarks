@@ -6,11 +6,10 @@ APP_SRC="${1:-packaging/dist/WatermarkRemover.app}"
 DMG_NAME="${2:-WatermarkRemover-1.0.1-macOS.dmg}"
 STAGE="$(mktemp -d)"
 
-# 仅作 ad-hoc 签名（不要 hardened runtime，会触发更严 Gatekeeper）
-if ! codesign -dv "$APP_SRC" 2>/dev/null | grep -q "adhoc"; then
-  echo "[1/3] ad-hoc codesign"
-  codesign --force --deep --sign - "$APP_SRC"
-fi
+# 每次都重新签（统一所有层的 Team ID —— 否则 macOS 因 Team ID 不匹配拒绝加载 Python）
+# 不要 hardened runtime，会触发更严 Gatekeeper
+echo "[1/3] ad-hoc codesign --deep（统一 Python.framework / dylib / .app 的 Team ID）"
+codesign --force --deep --sign - --timestamp=none "$APP_SRC"
 
 echo "[2/3] stage $APP_SRC -> $STAGE"
 cp -R "$APP_SRC" "$STAGE/"

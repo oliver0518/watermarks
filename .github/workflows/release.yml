@@ -82,14 +82,15 @@ jobs:
             --workpath packaging/build \
             packaging/watermark-remover.spec
 
-      # macOS: 给 .app 加 ad-hoc 签名 + hardened runtime
-      # hardened runtime 让 Apple Silicon 上的 Gatekeeper 允许 .app 运行
-      - name: Codesign (macOS ad-hoc + hardened runtime)
+      # macOS: 给 .app 加 ad-hoc 签名（统一 Python.framework / dylib / .app 的 Team ID）
+# Team ID 不匹配时 macOS 拒绝 dlopen Python，提示 "different Team IDs"
+# --deep 会自动重签所有内层
+      - name: Codesign (macOS ad-hoc, unified Team ID)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          codesign --force --deep --sign - --options runtime dist/WatermarkRemover.app
-          codesign -dv --verbose=2 dist/WatermarkRemover.app 2>&1 | grep -E "flags|Identifier" | head -5
+          codesign --force --deep --sign - --timestamp=none dist/WatermarkRemover.app
+          codesign -dv --verbose=2 dist/WatermarkRemover.app 2>&1 | grep -E "Identifier|Signature" | head -5
 
       # 平台特定：打包成最终分发格式
       - name: Package (macOS DMG)

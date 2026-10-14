@@ -54,17 +54,21 @@ header .sub { color: var(--muted); font-size: 14px; }
 
 .select-wrap { display: flex; flex-direction: column; gap: 12px; }
 .video-box {
+  /* 关键：容器要严格 fit video 实际渲染矩形，否则 mousedown 坐标与视频像素错位 */
   position: relative;
   border-radius: var(--radius);
   overflow: hidden;
   background: #000;
-  width: 100%;
+  width: max-content;            /* shrink-wrap 视频宽度 */
+  max-width: 100%;               /* 但不超过父容器 */
   max-height: 420px;
+  margin: 0 auto;                /* 居中 */
 }
 .video-box video {
-  width: 100%;
-  height: auto;
   display: block;
+  width: auto;                   /* 保持视频原始宽高比 */
+  height: auto;
+  max-width: 100%;
   max-height: 420px;
 }
 .video-overlay {

@@ -86,10 +86,15 @@ overlay.addEventListener('touchstart', e => startSelect(e, true), { passive: fal
 let dragging = false;
 let startX = 0, startY = 0;
 
+// 用 video 实际渲染矩形做归一化（不是 videoBox 容器；letterbox 下两者不一致）
+function getVideoRect() {
+  return video.getBoundingClientRect();
+}
+
 function startSelect(e, isTouch) {
   if (isTouch) e.preventDefault();
   dragging = true;
-  const rect = videoBox.getBoundingClientRect();
+  const rect = getVideoRect();
   const pt = getPoint(e, isTouch);
   startX = Math.min(Math.max(pt.x - rect.left, 0), rect.width);
   startY = Math.min(Math.max(pt.y - rect.top, 0), rect.height);
@@ -122,7 +127,7 @@ function getPoint(e, isTouch) {
 }
 
 function updateSel(x1, y1, x2, y2) {
-  const rect = videoBox.getBoundingClientRect();
+  const rect = getVideoRect();
   if (x2 === undefined) { x2 = x1; y2 = y1; }
   const l = Math.min(x1, x2), t = Math.min(y1, y2);
   const r = Math.max(x1, x2), b = Math.max(y1, y2);
@@ -133,7 +138,7 @@ function updateSel(x1, y1, x2, y2) {
 }
 
 function finalize() {
-  const rect = videoBox.getBoundingClientRect();
+  const rect = getVideoRect();
   const l = parseFloat(selection.style.left), t = parseFloat(selection.style.top);
   const w = parseFloat(selection.style.width), h = parseFloat(selection.style.height);
   if (w < 5 || h < 5) { resetSelection(); return; }

@@ -859,7 +859,7 @@ if __name__ == "__main__":
             except Exception as e:
                 log.warning("set closing handler failed: %s", e)
 
-            # macOS：让 app 不因最后一个 window 关闭而退出 + Dock 点击重新显示窗口
+            # macOS: 让 app 不因最后一个 window 关闭而退出 + Dock 点击重新显示窗口
             if sys.platform == "darwin":
                 try:
                     # 1) 阻止 NSApp 在所有 window 关闭时退出
@@ -882,31 +882,56 @@ if __name__ == "__main__":
                             )
                             log.info("AppDelegate patched: keep alive after window close")
                         except Exception as e:
-                            log.warning("patch AppDelegate failed: %s", e)
+                            log.warning("patch AppDelegate (keep alive) failed: %s", e)
 
-                    # 2) 监听 NSApplicationDidBecomeActiveNotification → 显示窗口
-                    from Foundation import (
-                        NSNotificationCenter,
-                        NSApplicationDidBecomeActiveNotification,
-                    )
-                    from AppKit import NSApp
-
-                    def _on_active(_notification):
+                        # 2) Dock 点击重新显示窗口 —— 必须用 applicationShouldHandleReopen:hasVisibleWindows:
+                        #    否则之前用的 NSApplicationDidBecomeActiveNotification 在 app 没退出的情况下不会触发
                         try:
-                            if window.hidden:
-                                window.show()
-                                NSApp.activateIgnoringOtherApps_(True)
-                        except Exception:
-                            pass
+                            def _reopen_has_windows(self, _sender, _flag):
+                                try:
+                                    window.show()
+                                    NSApp.activateIgnoringOtherApps_(True)
+                                except Exception as exc:
+                                    log.warning("reopen show failed: %s", exc)
+                                return True
+                            import objc as _objc
+                            _objc.classAddMethod(
+                                _AppDelegate,
+                                b"applicationShouldHandleReopen:hasVisibleWindows:",
+                                _reopen_has_windows,
+                            )
+                            log.info("AppDelegate patched: Dock click reopens window")
+                        except Exception as e:
+                            log.warning("patch AppDelegate (reopen) failed: %s", e)
 
-                    NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
-                        NSApplicationDidBecomeActiveNotification,
-                        None,
-                        None,
-                        _on_active,
-                    )
+                    # 兜底：监听 NSApplicationDidBecomeActiveNotification（用户切换前台时同步）
+                    try:
+                        from Foundation import (
+                            NSNotificationCenter,
+                            NSApplicationDidBecomeActiveNotification,
+                        )
+                        from AppKit import NSApp
+
+                        def _on_active(_notification):
+                            try:
+                                if window.hidden:
+                                    window.show()
+                                    NSApp.activateIgnoringOtherApps_(True)
+                            except Exception:
+                                pass
+
+                        NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+                            NSApplicationDidBecomeActiveNotification,
+                            None,
+                            None,
+                            _on_active,
+                        )
+                    except Exception as e:
+                        log.warning("became-active observer failed: %s", e)
+
                 except Exception as e:
                     log.warning("macOS Dock handler setup failed: %s", e)
+
 
             # 启动 webview 事件循环（阻塞直到 NSApp 退出）
             webview.start()

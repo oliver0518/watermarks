@@ -224,3 +224,16 @@ rm -rf .venv    # 删 venv（重装时使用）
 ## License
 
 MIT — see [LICENSE](LICENSE).
+## 🍎 macOS 首次启动
+
+如果从 **下载的 DMG** 把 .app 拖到 Applications 后**双击闪退**，是 macOS Gatekeeper 在拦（developer 未签名）。解决：
+
+```bash
+# 方案 A：右键打开（首次）
+# 在 Finder → 找到 .app → 右键 → 打开 → 「打开」
+
+# 方案 B：清除隔离属性
+xattr -dr com.apple.quarantine /Applications/WatermarkRemover.app
+```
+
+关闭窗口 = 隐藏到 Dock（不退出）。再点 Dock 图标会自动重新显示窗口。

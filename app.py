@@ -415,18 +415,59 @@ def too_large(_e):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("DEPLOY_RUN_PORT", "8300"))
+    import threading
+    import time
+    import webbrowser
 
-    # 桌面应用自启动：PyInstaller 打包后，让浏览器自动打开界面
+    port = int(os.environ.get("DEPLOY_RUN_PORT", "8300"))
+    host = "127.0.0.1"
+
+    log.info("starting watermark-remover on http://%s:%d (frozen=%s)",
+             host, port, getattr(sys, "frozen", False))
+
     if getattr(sys, "frozen", False):
-        import threading, time, webbrowser
-        def _open_browser():
-            time.sleep(2)
+        # 打包态：起后台 Flask + 用系统 WebKit 弹原生窗口（pywebview）
+        # 必须 main thread 跑 webview，后台线程跑 HTTP server
+        from werkzeug.serving import make_server
+
+        server = make_server(host, port, app, threaded=True)
+        server_thread = threading.Thread(
+            target=server.serve_forever, name="flask-server", daemon=True
+        )
+        server_thread.start()
+
+        try:
+            import webview  # pywebview：跨平台 native window
+        except Exception as exc:
+            log.error("import pywebview failed (%s) — fall back to webbrowser", exc)
+            webbrowser.open(f"http://{host}:{port}")
+            server.serve_forever()
+        else:
+            window = webview.create_window(
+                title="Watermark Remover · 秋白视频工作台",
+                url=f"http://{host}:{port}",
+                width=960,
+                height=760,
+                resizable=True,
+                min_size=(640, 520),
+                text_select=True,
+            )
+            # 窗口关闭时 webview.start() 返回，再安全关 server
+            webview.start()
             try:
-                webbrowser.open(f"http://127.0.0.1:{port}")
+                server.shutdown()
             except Exception:
                 pass
-        threading.Thread(target=_open_browser, daemon=True).start()
+            log.info("watermark-remover window closed, exiting")
+    else:
+        # 开发态：起 Flask + 用默认浏览器自动打开
+        def _open_browser():
+            time.sleep(1.5)
+            try:
+                webbrowser.open(f"http://{host}:{port}")
+            except Exception:
+                pass
 
-    log.info("starting watermark-remover on http://127.0.0.1:%d", port)
-    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+        threading.Thread(target=_open_browser, daemon=True).start()
+        log.info("starting watermark-remover on http://%s:%d", host, port)
+        app.run(host=host, port=port, debug=False, threaded=True)

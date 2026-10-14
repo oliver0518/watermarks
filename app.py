@@ -13,6 +13,7 @@ import shutil
 import json
 import glob
 import logging
+import time
 
 import cv2
 import numpy as np
@@ -73,6 +74,109 @@ if getattr(sys, "frozen", False):
 
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "ffprobe"
+
+THUMB_DIR = os.path.join(BASE, "thumbnails")
+os.makedirs(THUMB_DIR, exist_ok=True)
+
+
+def extract_thumbnail(src, sid, width=240):
+    """从视频第一秒抽一帧生成 jpg 缩略图，返回路径或 None。"""
+    try:
+        thumb_path = os.path.join(THUMB_DIR, sid + ".jpg")
+        if os.path.exists(thumb_path):
+            return thumb_path
+        cmd = [
+            FFMPEG, "-y", "-ss", "0", "-i", src,
+            "-frames:v", "1",
+            "-vf", f"scale={width}:-2",
+            "-q:v", "5",
+            thumb_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=20)
+        if r.returncode == 0 and os.path.exists(thumb_path):
+            return thumb_path
+        return None
+    except Exception as e:
+        log.warning("extract_thumbnail failed: %s", e)
+        return None
+
+
+def output_name_for(original_name):
+    """把 'video.mp4' 变成 'video_去水印.mp4'。"""
+    stem, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".mp4"
+    return f"{stem}_去水印{ext}"
+
+
+# ---------- 历史记录 ----------
+import threading as _threading
+HISTORY_LOCK = _threading.Lock()
+HISTORY_FILE = os.path.join(BASE, "history.json")
+HISTORY_MAX = 30  # 最多保留多少条
+
+
+def _load_history():
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        log.warning("load history failed: %s", e)
+        return []
+
+
+def _save_history(items):
+    try:
+        tmp = HISTORY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, HISTORY_FILE)
+    except Exception as e:
+        log.warning("save history failed: %s", e)
+
+
+def add_history(record):
+    """处理成功时记录一条历史。"""
+    with HISTORY_LOCK:
+        items = _load_history()
+        items.insert(0, record)
+        # 超过上限时清理最旧的文件
+        if len(items) > HISTORY_MAX:
+            for old in items[HISTORY_MAX:]:
+                for key in ("srcPath", "outputPath", "thumbPath"):
+                    p = old.get(key)
+                    if p and os.path.isfile(p):
+                        try:
+                            os.remove(p)
+                        except OSError:
+                            pass
+            items = items[:HISTORY_MAX]
+        _save_history(items)
+
+
+def remove_history(record_id):
+    with HISTORY_LOCK:
+        items = _load_history()
+        kept = []
+        removed = None
+        for it in items:
+            if it.get("id") == record_id and removed is None:
+                removed = it
+            else:
+                kept.append(it)
+        if removed is not None:
+            _save_history(kept)
+            for key in ("srcPath", "outputPath", "thumbPath"):
+                p = removed.get(key)
+                if p and os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+        return removed is not None
 
 
 def _bundled_binary(name):
@@ -191,32 +295,74 @@ def uploaded(name):
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
-    f = request.files.get("video")
-    if not f:
+    """支持单文件或多文件上传（一次请求）。
+    - 单文件时返回顶层 id/src/info（向后兼容旧前端）
+    - 多文件时返回 items: [...] 列表
+    """
+    files = request.files.getlist("video")
+    if not files:
         return jsonify({"error": "未收到文件"}), 400
-    if not allowed_file(f.filename):
-        return jsonify({"error": "不支持的视频格式"}), 400
-    sid = uuid.uuid4().hex
-    ext = os.path.splitext(f.filename)[1].lower()
-    src = os.path.join(UPLOAD_DIR, sid + ext)
-    f.save(src)
 
-    # magic bytes 校验
-    kind = detect_kind(src)
-    if kind is None:
-        os.remove(src)
-        return jsonify({"error": "文件内容与扩展名不符，可能不是有效视频"}), 400
+    items = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        if not allowed_file(f.filename):
+            items.append({"filename": f.filename, "error": "不支持的视频格式"})
+            continue
+        sid = uuid.uuid4().hex
+        ext = os.path.splitext(f.filename)[1].lower()
+        src = os.path.join(UPLOAD_DIR, sid + ext)
+        try:
+            f.save(src)
+            kind = detect_kind(src)
+            if kind is None:
+                os.remove(src)
+                items.append({"filename": f.filename, "error": "文件内容与扩展名不符"})
+                continue
+            info = video_info(src)
+            if info["width"] <= 0 or info["height"] <= 0:
+                os.remove(src)
+                items.append({"filename": f.filename, "error": "无法解析该视频"})
+                continue
+            log.info("upload sid=%s %dx%d %.2fs %s", sid, info["width"], info["height"],
+                     info["duration"], f.filename)
+            items.append({
+                "id": sid,
+                "filename": f.filename,
+                "src": f"/uploads/{sid}{ext}",
+                "info": info,
+                "thumbUrl": f"/api/thumb/{sid}",
+            })
+            # 把原始文件名存到 src 旁的 meta 文件，process 时读取
+            try:
+                with open(src + ".meta", "w", encoding="utf-8") as mf:
+                    json.dump({"originalName": f.filename}, mf, ensure_ascii=False)
+            except OSError:
+                pass
+            # 同步抽第一帧做缩略图（失败不影响上传）
+            try:
+                extract_thumbnail(src, sid)
+            except Exception as e:
+                log.warning("thumbnail extract error: %s", e)
+        except Exception as e:
+            log.exception("upload %s failed: %s", f.filename, e)
+            items.append({"filename": f.filename, "error": str(e)})
 
-    info = video_info(src)
-    if info["width"] <= 0 or info["height"] <= 0:
-        os.remove(src)
-        return jsonify({"error": "无法解析该视频"}), 400
-    log.info("upload sid=%s %dx%d %.2fs", sid, info["width"], info["height"], info["duration"])
-    return jsonify({
-        "id": sid,
-        "src": f"/uploads/{sid}{ext}",
-        "info": info,
-    })
+    # 单文件：保留旧 schema 以便旧前端兼容
+    if len(items) == 1:
+        only = items[0]
+        if "id" in only:
+            return jsonify({
+                "id": only["id"],
+                "filename": only["filename"],
+                "src": only["src"],
+                "info": only["info"],
+            })
+        return jsonify({"error": only.get("error", "上传失败")}), 400
+
+    # 多文件：返回 items 列表
+    return jsonify({"items": items})
 
 
 @app.route("/api/preview-frame", methods=["GET"])
@@ -247,9 +393,17 @@ def inpaint_video(src, out, box, method="telea", radius=3):
     box: (x, y, w, h) 像素坐标
     method: telea / ns
     """
-    cap = cv2.VideoCapture(src)
-    if not cap.isOpened():
-        raise RuntimeError("无法打开视频文件")
+    # macOS 上 cv2.VideoCapture 偶发一次性失败（多 ffmpeg 子进程 fd 竞争 / 文件 lock），
+    # 重试一次可绕过大多数 transient 错误
+    cap = None
+    for attempt in range(3):
+        cap = cv2.VideoCapture(src)
+        if cap.isOpened():
+            break
+        cap.release()
+        time.sleep(0.4 * (attempt + 1))
+    else:
+        raise RuntimeError(f"无法打开视频文件：{src}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -353,7 +507,8 @@ def process():
     if not vid or not box:
         return jsonify({"error": "参数不完整"}), 400
 
-    matches = glob.glob(os.path.join(UPLOAD_DIR, vid) + ".*")
+    matches = [m for m in glob.glob(os.path.join(UPLOAD_DIR, vid) + ".*")
+               if not m.endswith(".meta")]
     if not matches:
         return jsonify({"error": "源文件不存在"}), 404
     src = matches[0]
@@ -384,15 +539,51 @@ def process():
             raise RuntimeError("输出视频无效")
 
         # 移动到顶层 output 便于下载
-        public_out = os.path.join(OUTPUT_DIR, vid + "_result.mp4")
+        # 文件名 = "<sid>_<原名去水印>.mp4"，用 sid 前缀避免同名冲突
+        # 优先从 src 旁的 meta 文件读 originalName（用户在 upload 时的原文件名）
+        original_name = None
+        meta_path = src + ".meta"
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as mf:
+                    original_name = (json.load(mf) or {}).get("originalName")
+            except Exception:
+                pass
+        if not original_name:
+            # fallback：现有 history record
+            existing = _find_history_item(vid)
+            if existing and existing.get("originalName"):
+                original_name = existing["originalName"]
+        if not original_name:
+            original_name = os.path.basename(src)
+        out_basename = output_name_for(original_name)
+        public_out = os.path.join(OUTPUT_DIR, f"{vid}__{out_basename}")
         safe_move(final, public_out)
         shutil.rmtree(tmpdir, ignore_errors=True)
+        # 写/更新历史
+        try:
+            thumb_path = os.path.join(THUMB_DIR, vid + ".jpg")
+            add_history({
+                "id": vid,
+                "originalName": original_name,
+                "outputName": out_basename,
+                "processedAt": int(time.time()),
+                "width": finfo["width"],
+                "height": finfo["height"],
+                "duration": info.get("duration", 0.0),
+                "size": os.path.getsize(public_out),
+                "srcPath": src,
+                "outputPath": public_out,
+                "thumbPath": thumb_path if os.path.isfile(thumb_path) else None,
+            })
+        except Exception as e:
+            log.warning("add_history failed: %s", e)
         log.info("processed sid=%s -> %s", vid, public_out)
         return jsonify({
             "success": True,
             "url": f"/output/{os.path.basename(public_out)}",
             "info": {"width": finfo["width"], "height": finfo["height"],
-                     "fps": finfo["fps"]}
+                     "fps": finfo["fps"], "size": os.path.getsize(public_out)}
         })
     except Exception as e:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -405,6 +596,96 @@ def output(name):
     name = os.path.basename(name)
     return send_from_directory(OUTPUT_DIR, name, as_attachment=True,
                                download_name=name)
+
+
+# ---------- 历史 API ----------
+def _find_history_item(rid):
+    for it in _load_history():
+        if it.get("id") == rid:
+            return it
+    return None
+
+
+@app.route("/api/history", methods=["GET"])
+def api_history_list():
+    items = _load_history()
+    out = []
+    for it in items:
+        out.append({
+            "id": it.get("id"),
+            "originalName": it.get("originalName", "video.mp4"),
+            "outputName": it.get("outputName") or output_name_for(it.get("originalName", "video.mp4")),
+            "processedAt": it.get("processedAt"),
+            "width": it.get("width", 0),
+            "height": it.get("height", 0),
+            "duration": it.get("duration", 0.0),
+            "size": it.get("size", 0),
+            "thumbUrl": f"/api/thumb/{it.get('id')}",
+            "downloadUrl": f"/api/history/{it.get('id')}/download",
+        })
+    return jsonify(out)
+
+
+@app.route("/api/history/<rid>/download")
+def api_history_download(rid):
+    it = _find_history_item(rid)
+    if not it:
+        abort(404)
+    p = it.get("outputPath")
+    if not p or not os.path.isfile(p):
+        abort(404)
+    return send_file(
+        p,
+        as_attachment=True,
+        download_name=output_name_for(it.get("originalName", os.path.basename(p))),
+    )
+
+
+@app.route("/api/history/<rid>/view")
+def api_history_view(rid):
+    """inline 流式返回 mp4，让 WebKit <video> 标签直接播放（不下载）。"""
+    it = _find_history_item(rid)
+    if not it:
+        abort(404)
+    p = it.get("outputPath")
+    if not p or not os.path.isfile(p):
+        abort(404)
+    return send_file(p, mimetype="video/mp4", conditional=True)
+
+
+@app.route("/api/thumb/<sid>")
+def api_thumb(sid):
+    """返回上传视频的第一帧 jpg 缩略图。"""
+    # 安全：只允许字母数字
+    if not sid.isalnum():
+        abort(404)
+    p = os.path.join(THUMB_DIR, sid + ".jpg")
+    if not os.path.isfile(p):
+        # 源可能还在但缩略图还没生成（抽帧失败）— 尝试现在抽
+        # 找 uploads 里匹配 sid.* 的源文件
+        for ext in (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"):
+            src = os.path.join(UPLOAD_DIR, sid + ext)
+            if os.path.isfile(src):
+                extract_thumbnail(src, sid)
+                break
+    if not os.path.isfile(p):
+        # 1x1 透明 png fallback
+        from flask import Response
+        return Response(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\x00\x01"
+            b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82",
+            mimetype="image/png",
+        )
+    return send_file(p, mimetype="image/jpeg", max_age=3600)
+
+
+@app.route("/api/history/<rid>", methods=["DELETE"])
+def api_history_delete(rid):
+    ok = remove_history(rid)
+    if not ok:
+        return jsonify({"error": "记录不存在"}), 404
+    return jsonify({"ok": True})
 
 
 # ---------- 入口 ----------
@@ -443,22 +724,198 @@ if __name__ == "__main__":
             webbrowser.open(f"http://{host}:{port}")
             server.serve_forever()
         else:
+            # ---- pywebview Api（暴露给 JS 调，弹原生 NSSavePanel） ----
+            class Api:
+                def save_as(self, result_id):
+                    """弹原生 NSSavePanel，让用户选目录保存。"""
+                    out_path = os.path.join(OUTPUT_DIR, result_id + "_result.mp4")
+                    if not os.path.isfile(out_path):
+                        return None
+                    # 默认文件名
+                    history_item = _find_history_item(result_id)
+                    default = "去水印_" + (history_item["originalName"]
+                                            if history_item else "video.mp4")
+                    try:
+                        result = window.create_file_dialog(
+                            webview.SAVE_DIALOG,
+                            save_filename=default,
+                            file_types=("视频 (*.mp4)", "所有文件 (*)"),
+                        )
+                    except Exception as e:
+                        log.warning("create_file_dialog failed: %s", e)
+                        return None
+                    # result 可能是 tuple/list[str] 或 str
+                    target = None
+                    if isinstance(result, (tuple, list)) and result:
+                        target = result[0]
+                    elif isinstance(result, str):
+                        target = result
+                    if not target:
+                        return None  # 用户取消
+                    try:
+                        shutil.copy2(out_path, target)
+                        return {"path": target, "name": os.path.basename(target)}
+                    except Exception as e:
+                        log.error("save_as copy failed: %s", e)
+                        return {"error": str(e)}
+
+                def quit_app(self):
+                    """真正退出应用（用户从菜单/Dock 选 Quit 时调用）。"""
+                    log.info("user requested quit")
+                    try:
+                        server.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        webview.destroy_window(window)
+                    except Exception:
+                        pass
+                    import objc
+                    objc.objc_super
+                    from AppKit import NSApp
+                    NSApp.terminate(None)
+
+                def save_all(self, ids):
+                    """批量下载：弹原生目录选择，把多个历史项的输出文件复制到该目录。"""
+                    if not ids:
+                        return None
+                    # 弹原生目录选择
+                    try:
+                        result = window.create_file_dialog(
+                            webview.FOLDER_DIALOG,
+                            directory=os.path.expanduser("~/Downloads"),
+                        )
+                    except Exception as e:
+                        log.warning("create_file_dialog FOLDER failed: %s", e)
+                        return None
+                    target_dir = None
+                    if isinstance(result, (tuple, list)) and result:
+                        target_dir = result[0]
+                    elif isinstance(result, str):
+                        target_dir = result
+                    if not target_dir:
+                        return None
+                    # 复制文件
+                    saved, failed = [], []
+                    for rid in ids:
+                        it = _find_history_item(rid)
+                        if not it:
+                            failed.append(rid)
+                            continue
+                        src = it.get("outputPath")
+                        if not src or not os.path.isfile(src):
+                            failed.append(rid)
+                            continue
+                        out_name = it.get("outputName") or output_name_for(
+                            it.get("originalName", os.path.basename(src))
+                        )
+                        dst = os.path.join(target_dir, out_name)
+                        # 同名自动加 _N 后缀
+                        if os.path.exists(dst):
+                            stem, ext = os.path.splitext(out_name)
+                            for k in range(1, 1000):
+                                cand = os.path.join(target_dir, f"{stem}_{k}{ext}")
+                                if not os.path.exists(cand):
+                                    dst = cand
+                                    break
+                        try:
+                            shutil.copy2(src, dst)
+                            saved.append(os.path.basename(dst))
+                        except Exception as e:
+                            log.warning("save_all copy %s failed: %s", rid, e)
+                            failed.append(rid)
+                    return {
+                        "dir": target_dir,
+                        "count": len(saved),
+                        "saved": saved,
+                        "failed": failed,
+                    }
+
             window = webview.create_window(
-                title="Watermark Remover · 秋白视频工作台",
+                title="秋白去水印",
                 url=f"http://{host}:{port}",
                 width=960,
                 height=760,
                 resizable=True,
                 min_size=(640, 520),
                 text_select=True,
+                js_api=Api(),  # 注入到 window.pywebview.api（必须用 js_api 参数）
             )
-            # 窗口关闭时 webview.start() 返回，再安全关 server
+
+            api_instance = window._js_api  # pywebview 内部存了一份
+            # 诊断：列出 js_api 暴露的方法，确认 save_as 在
+            api_methods = [m for m in dir(api_instance) if not m.startswith('_') and callable(getattr(api_instance, m))]
+            log.info("js_api injected, methods: %s, save_as: %s",
+                     api_methods, callable(getattr(api_instance, "save_as", None)))
+
+            # 关窗 = 隐藏（不退出进程）
+            def on_closing():
+                log.info("window closing intercepted — hide instead of destroy")
+                window.hide()
+                return False  # 取消关闭，仅隐藏
+
+            try:
+                window.events.closing += on_closing
+            except Exception as e:
+                log.warning("set closing handler failed: %s", e)
+
+            # macOS：让 app 不因最后一个 window 关闭而退出 + Dock 点击重新显示窗口
+            if sys.platform == "darwin":
+                try:
+                    # 1) 阻止 NSApp 在所有 window 关闭时退出
+                    try:
+                        import webview.platforms.cocoa as cocoa_platform
+                        _AppDelegate = getattr(cocoa_platform, "AppDelegate", None) \
+                                       or getattr(cocoa_platform, "_AppDelegate", None)
+                    except Exception:
+                        _AppDelegate = None
+                    if _AppDelegate is not None:
+                        # 用 PyObjC 的 class extension 替换 method
+                        try:
+                            def _keep_alive(self, _sender):
+                                return False
+                            import objc
+                            objc.classAddMethod(
+                                _AppDelegate,
+                                b"applicationShouldTerminateAfterLastWindowClosed:",
+                                _keep_alive,
+                            )
+                            log.info("AppDelegate patched: keep alive after window close")
+                        except Exception as e:
+                            log.warning("patch AppDelegate failed: %s", e)
+
+                    # 2) 监听 NSApplicationDidBecomeActiveNotification → 显示窗口
+                    from Foundation import (
+                        NSNotificationCenter,
+                        NSApplicationDidBecomeActiveNotification,
+                    )
+                    from AppKit import NSApp
+
+                    def _on_active(_notification):
+                        try:
+                            if window.hidden:
+                                window.show()
+                                NSApp.activateIgnoringOtherApps_(True)
+                        except Exception:
+                            pass
+
+                    NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+                        NSApplicationDidBecomeActiveNotification,
+                        None,
+                        None,
+                        _on_active,
+                    )
+                except Exception as e:
+                    log.warning("macOS Dock handler setup failed: %s", e)
+
+            # 启动 webview 事件循环（阻塞直到 NSApp 退出）
             webview.start()
+            log.info("NSApp exited, shutting down")
             try:
                 server.shutdown()
             except Exception:
                 pass
-            log.info("watermark-remover window closed, exiting")
+            log.info("watermark-remover exiting")
     else:
         # 开发态：起 Flask + 用默认浏览器自动打开
         def _open_browser():

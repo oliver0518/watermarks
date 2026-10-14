@@ -107,12 +107,13 @@ if sys.platform == "darwin":
         icon="icon.icns",
         bundle_identifier="cc.oliver.watermark-remover",
         info_plist={
-            "CFBundleName": "Watermark Remover",
-            "CFBundleDisplayName": "Watermark Remover",
-            "CFBundleShortVersionString": "1.0.0",
-            "CFBundleVersion": "1",
+            "CFBundleName": "秋白去水印",
+            "CFBundleDisplayName": "秋白去水印",
+            "CFBundleShortVersionString": "1.0.1",
+            "CFBundleVersion": "2",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.video",
             "LSMinimumSystemVersion": "11.0",
+            "NSHumanReadableCopyright": "© 2026 Oliver",
         },
     )
